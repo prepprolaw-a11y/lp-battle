@@ -5,10 +5,9 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
-// 🔴 REQUIRED FOR RAILWAY HEALTHCHECK
-app.get("/", (req, res) => {
-    res.status(200).send("OK");
-});
+// ✅ HEALTH CHECK (CRITICAL FOR RAILWAY)
+app.get("/", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => res.json({ status: "ok" }));
 
 const io = new Server(server, {
   cors: {
@@ -68,7 +67,7 @@ io.on("connection", socket => {
     });
 });
 
-// 🔴 MUST USE ENV PORT
+// ✅ MUST BIND TO 0.0.0.0
 const PORT = process.env.PORT;
 server.listen(PORT, "0.0.0.0", () => {
     console.log("🚀 Battle server running on port", PORT);
