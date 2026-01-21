@@ -28,13 +28,19 @@ const QUESTIONS = [
 ];
 
 /* =========================
-   SOCKET.IO
+   SOCKET.IO (CRITICAL FIX)
 ========================= */
 const io = new Server(server, {
   cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  }
+    origin: [
+      "https://battle.theroyalfoundation.org.in",
+      "https://blog.legitprep.in"
+    ],
+    methods: ["GET", "POST"],
+    credentials: true
+  },
+  transports: ["websocket"], // 🔥 FORCE WEBSOCKET
+  allowUpgrades: true
 });
 
 /* =========================
@@ -116,7 +122,6 @@ function finishQuestion(roomId) {
 io.on("connection", socket => {
   console.log("🔌 Connected:", socket.id);
 
-  /* ----- JOIN SEARCH ----- */
   socket.on("join_search", () => {
     removeFromQueue(socket.id);
 
@@ -132,7 +137,6 @@ io.on("connection", socket => {
       clearTimeout(opponentData.timeout);
 
       const roomId = `room_${opponent.id}_${socket.id}`;
-
       socket.join(roomId);
       opponent.join(roomId);
 
@@ -164,7 +168,6 @@ io.on("connection", socket => {
     }
   });
 
-  /* ----- ANSWER (HIDDEN) ----- */
   socket.on("answer", ({ roomId, option }) => {
     const room = rooms[roomId];
     if (!room) return;
@@ -178,7 +181,6 @@ io.on("connection", socket => {
     }
   });
 
-  /* ----- DISCONNECT ----- */
   socket.on("disconnect", () => {
     console.log("❌ Disconnected:", socket.id);
     removeFromQueue(socket.id);
@@ -197,7 +199,7 @@ io.on("connection", socket => {
 /* =========================
    START SERVER (RAILWAY)
 ========================= */
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
   console.log("🚀 Battle server running on port", PORT);
 });
