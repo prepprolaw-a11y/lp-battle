@@ -5,12 +5,16 @@ const { Server } = require("socket.io");
 const app = express();
 const server = http.createServer(app);
 
+// 🔴 REQUIRED FOR RAILWAY HEALTHCHECK
+app.get("/", (req, res) => {
+    res.status(200).send("OK");
+});
+
 const io = new Server(server, {
   cors: {
     origin: "*",
     methods: ["GET", "POST"]
   }
-  // ❌ NO transports forcing
 });
 
 let queue = [];
@@ -64,7 +68,8 @@ io.on("connection", socket => {
     });
 });
 
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
+// 🔴 MUST USE ENV PORT
+const PORT = process.env.PORT;
+server.listen(PORT, "0.0.0.0", () => {
     console.log("🚀 Battle server running on port", PORT);
 });
