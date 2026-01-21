@@ -17,8 +17,10 @@ let queue = [];
 function removeFromQueue(socketId) {
   const index = queue.findIndex(p => p.socket.id === socketId);
   if (index !== -1) {
-    clearTimeout(queue[index].timeout); // Clear server-side timeout
+    // Crucial: Clear the timeout so the server doesn't try to emit to a dead socket
+    clearTimeout(queue[index].timeout); 
     queue.splice(index, 1);
+    console.log(`Removed ${socketId} from queue. Current size: ${queue.length}`);
   }
 }
 
