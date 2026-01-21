@@ -39,7 +39,9 @@ io.on("connection", socket => {
             // Final safety check: Is the waiting player still there?
             if (!opponent || !opponent.connected) {
                 console.log("⚠️ Opponent disconnected, searching again...");
-                return socket.emit("join_search"); 
+                socket.emit("no_match");
+removeFromQueue(socket.id);
+
             }
 
             clearTimeout(opponentData.timeout);
