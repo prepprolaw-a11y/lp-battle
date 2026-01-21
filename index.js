@@ -12,43 +12,47 @@ const io = new Server(server, {
 /* -----------------------------
    MATCHMAKING STATE
 ------------------------------ */
-let waitingPlayer = null;   // single waiting socket
-let rooms = {};             // active rooms
+let waitingPlayer = null;
+let waitingTimeout = null;
 
 io.on("connection", socket => {
   console.log("User connected:", socket.id);
 
   socket.on("join_search", () => {
 
-    // If nobody waiting → wait
+    // If nobody is waiting → make this user wait
     if (!waitingPlayer) {
       waitingPlayer = socket;
-      console.log("Waiting player:", socket.id);
+      console.log("Player waiting:", socket.id);
+
+      // ⏳ Start 30s timeout
+      waitingTimeout = setTimeout(() => {
+        if (waitingPlayer && waitingPlayer.id === socket.id) {
+          console.log("No match in 30s for:", socket.id);
+          socket.emit("no_match");
+          waitingPlayer = null;
+        }
+      }, 30000);
+
       return;
     }
 
-    // If waiting player is same (edge case)
-    if (waitingPlayer.id === socket.id) return;
+    // If another player is already waiting → match instantly
+    if (waitingPlayer.id !== socket.id) {
 
-    // Create a NEW room for exactly 2 players
-    const roomId = `room_${waitingPlayer.id}_${socket.id}`;
+      clearTimeout(waitingTimeout);
 
-    rooms[roomId] = {
-      players: [waitingPlayer.id, socket.id],
-      status: "full"
-    };
+      const roomId = `room_${waitingPlayer.id}_${socket.id}`;
 
-    // Join sockets to room
-    socket.join(roomId);
-    waitingPlayer.join(roomId);
+      socket.join(roomId);
+      waitingPlayer.join(roomId);
 
-    console.log("Room created:", roomId);
+      console.log("Room created:", roomId);
 
-    // Notify both players
-    io.to(roomId).emit("match_found", { room: roomId });
+      io.to(roomId).emit("match_found", { room: roomId });
 
-    // Clear waiting slot
-    waitingPlayer = null;
+      waitingPlayer = null;
+    }
   });
 
   socket.on("disconnect", () => {
@@ -56,16 +60,8 @@ io.on("connection", socket => {
 
     // If waiting player disconnects
     if (waitingPlayer && waitingPlayer.id === socket.id) {
+      clearTimeout(waitingTimeout);
       waitingPlayer = null;
-    }
-
-    // Clean up rooms
-    for (const roomId in rooms) {
-      if (rooms[roomId].players.includes(socket.id)) {
-        io.to(roomId).emit("opponent_left");
-        delete rooms[roomId];
-        console.log("Room deleted:", roomId);
-      }
     }
   });
 });
