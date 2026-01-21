@@ -1,17 +1,15 @@
-/* index.js */
 const express = require("express");
 const http = require("http");
 const { Server } = require("socket.io");
 
 const app = express();
-app.get("/health", (req, res) => res.status(200).send("Alive"));
 const server = http.createServer(app);
 
-// Best-practice Socket.io configuration
 const io = new Server(server, {
   cors: { origin: "*" },
-  transports: ["websocket"],
-  pingTimeout: 60000, // Increase for better stability on slow networks
+  transports: ["websocket"], // Stick to websocket for speed
+  pingTimeout: 2000,         // Faster detection of dead clients
+  pingInterval: 5000
 });
 
 let queue = [];
@@ -19,17 +17,15 @@ let queue = [];
 function removeFromQueue(socketId) {
   const index = queue.findIndex(p => p.socket.id === socketId);
   if (index !== -1) {
-    clearTimeout(queue[index].timeout);
+    clearTimeout(queue[index].timeout); // Crucial: clear timeout to prevent memory leaks
     queue.splice(index, 1);
-    console.log(`User ${socketId} removed. Queue size: ${queue.length}`);
   }
 }
 
 io.on("connection", (socket) => {
-  console.log("New Connection:", socket.id);
+  console.log(`⚡ Connected: ${socket.id}`);
 
   socket.on("join_search", () => {
-    // Clear previous entries for this socket
     removeFromQueue(socket.id);
 
     if (queue.length > 0) {
@@ -37,32 +33,35 @@ io.on("connection", (socket) => {
       clearTimeout(opponent.timeout);
 
       const roomId = `room_${opponent.socket.id}_${socket.id}`;
+      
+      // Force both to join the room
       socket.join(roomId);
       opponent.socket.join(roomId);
 
-      console.log(`Match Found: ${roomId}`);
-      io.to(roomId).emit("match_found", { room: roomId });
+      // Emit to room (Standard practice)
+      io.to(roomId).emit("match_found", { 
+        room: roomId,
+        opponent: opponent.socket.id // Good to send metadata
+      });
+      
+      console.log(`✅ Match: ${roomId}`);
     } else {
+      console.log(`⏳ Queueing: ${socket.id}`);
+      
       const timeout = setTimeout(() => {
         socket.emit("no_match");
         removeFromQueue(socket.id);
       }, 30000);
 
       queue.push({ socket, timeout });
-      
-      // CRITICAL: Tell the client search is confirmed
-      socket.emit("search_started"); 
-      console.log(`User ${socket.id} is now waiting.`);
     }
   });
 
   socket.on("disconnect", () => {
+    console.log(`❌ Disconnected: ${socket.id}`);
     removeFromQueue(socket.id);
   });
 });
 
-// Explicit port handling for Railway
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`Battle server active on port ${PORT}`);
-});
+server.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
