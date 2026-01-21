@@ -13,48 +13,62 @@ const io = new Server(server, {
 });
 
 /* =========================
-   STABILIZED index.js
+   STABILIZED & OPTIMIZED index.js
 ========================== */
 let queue = []; 
 
 function removeFromQueue(socketId) {
     const index = queue.findIndex(p => p.socket.id === socketId);
     if (index !== -1) {
-        clearTimeout(queue[index].timeout); // Stop the 30s timer
+        clearTimeout(queue[index].timeout);
         queue.splice(index, 1);
-        console.log(`Removed ${socketId} from queue.`);
+        console.log(`🧹 Cleaned up: ${socketId}`);
     }
 }
 
 io.on("connection", socket => {
+    console.log(`🔌 New connection: ${socket.id}`);
+
     socket.on("join_search", () => {
-        // 1. Clean up any existing presence for this user
-        removeFromQueue(socket.id);
+        removeFromQueue(socket.id); // Prevent double-queueing
 
-        // 2. Try to match
         if (queue.length > 0) {
-            const opponent = queue.shift();
-            clearTimeout(opponent.timeout);
+            const opponentData = queue.shift();
+            const opponent = opponentData.socket;
 
-            const roomId = `room_${opponent.socket.id}_${socket.id}`;
+            // Final safety check: Is the waiting player still there?
+            if (!opponent || !opponent.connected) {
+                console.log("⚠️ Opponent disconnected, searching again...");
+                return socket.emit("join_search"); 
+            }
+
+            clearTimeout(opponentData.timeout);
+
+            const roomId = `room_${opponent.id}_${socket.id}`;
             
             socket.join(roomId);
-            opponent.socket.join(roomId);
+            opponent.join(roomId);
 
-            io.to(roomId).emit("match_found", { room: roomId });
-            console.log(`Match Created: ${roomId}`);
+            // Broadcast to both with extra metadata
+            io.to(roomId).emit("match_found", { 
+                room: roomId,
+                players: [socket.id, opponent.id]
+            });
+
+            console.log(`✅ Match Created: ${roomId}`);
         } else {
-            // 3. Add to queue with a safe timeout
             const timeout = setTimeout(() => {
                 socket.emit("no_match");
                 removeFromQueue(socket.id);
-            }, 30000);
+            }, 30000); // 30s limit
 
             queue.push({ socket, timeout });
+            console.log(`⏳ ${socket.id} added to queue`);
         }
     });
 
     socket.on("disconnect", () => {
         removeFromQueue(socket.id);
+        console.log(`❌ Disconnected: ${socket.id}`);
     });
 });
