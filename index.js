@@ -12,56 +12,49 @@ const io = new Server(server, {
   pingInterval: 5000
 });
 
-let queue = [];
+/* =========================
+   STABILIZED index.js
+========================== */
+let queue = []; 
 
 function removeFromQueue(socketId) {
-  const index = queue.findIndex(p => p.socket.id === socketId);
-  if (index !== -1) {
-    clearTimeout(queue[index].timeout); // Crucial: clear timeout to prevent memory leaks
-    queue.splice(index, 1);
-  }
+    const index = queue.findIndex(p => p.socket.id === socketId);
+    if (index !== -1) {
+        clearTimeout(queue[index].timeout); // Stop the 30s timer
+        queue.splice(index, 1);
+        console.log(`Removed ${socketId} from queue.`);
+    }
 }
 
-io.on("connection", (socket) => {
-  console.log(`⚡ Connected: ${socket.id}`);
-
-  socket.on("join_search", () => {
-    removeFromQueue(socket.id);
-
-    if (queue.length > 0) {
-      const opponent = queue.shift();
-      clearTimeout(opponent.timeout);
-
-      const roomId = `room_${opponent.socket.id}_${socket.id}`;
-      
-      // Force both to join the room
-      socket.join(roomId);
-      opponent.socket.join(roomId);
-
-      // Emit to room (Standard practice)
-      io.to(roomId).emit("match_found", { 
-        room: roomId,
-        opponent: opponent.socket.id // Good to send metadata
-      });
-      
-      console.log(`✅ Match: ${roomId}`);
-    } else {
-      console.log(`⏳ Queueing: ${socket.id}`);
-      
-      const timeout = setTimeout(() => {
-        socket.emit("no_match");
+io.on("connection", socket => {
+    socket.on("join_search", () => {
+        // 1. Clean up any existing presence for this user
         removeFromQueue(socket.id);
-      }, 30000);
 
-      queue.push({ socket, timeout });
-    }
-  });
+        // 2. Try to match
+        if (queue.length > 0) {
+            const opponent = queue.shift();
+            clearTimeout(opponent.timeout);
 
-  socket.on("disconnect", () => {
-    console.log(`❌ Disconnected: ${socket.id}`);
-    removeFromQueue(socket.id);
-  });
+            const roomId = `room_${opponent.socket.id}_${socket.id}`;
+            
+            socket.join(roomId);
+            opponent.socket.join(roomId);
+
+            io.to(roomId).emit("match_found", { room: roomId });
+            console.log(`Match Created: ${roomId}`);
+        } else {
+            // 3. Add to queue with a safe timeout
+            const timeout = setTimeout(() => {
+                socket.emit("no_match");
+                removeFromQueue(socket.id);
+            }, 30000);
+
+            queue.push({ socket, timeout });
+        }
+    });
+
+    socket.on("disconnect", () => {
+        removeFromQueue(socket.id);
+    });
 });
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`🚀 Server on port ${PORT}`));
