@@ -29,6 +29,7 @@ const io = new Server(server, {
 });
 
 let queue = [];
+const rooms = {};
 
 function removeFromQueue(socketId) {
     const index = queue.findIndex(p => p.socket.id === socketId);
