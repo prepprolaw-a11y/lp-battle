@@ -6,10 +6,11 @@ const app = express();
 const server = http.createServer(app);
 
 const io = new Server(server, {
-  cors: { origin: "*" },
-  transports: ["websocket"],
-  pingTimeout: 2000,
-  pingInterval: 5000
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+  // ❌ NO transports forcing
 });
 
 let queue = [];
@@ -34,7 +35,6 @@ io.on("connection", socket => {
 
             if (!opponent || !opponent.connected) {
                 socket.emit("no_match");
-                removeFromQueue(socket.id);
                 return;
             }
 
@@ -64,6 +64,7 @@ io.on("connection", socket => {
     });
 });
 
-server.listen(3000, () => {
-    console.log("🚀 Battle server running on port 3000");
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log("🚀 Battle server running on port", PORT);
 });
