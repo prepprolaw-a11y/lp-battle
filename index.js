@@ -8,6 +8,18 @@ const server = http.createServer(app);
 // ✅ HEALTH CHECK (CRITICAL FOR RAILWAY)
 app.get("/", (req, res) => res.send("OK"));
 app.get("/health", (req, res) => res.json({ status: "ok" }));
+const QUESTIONS = [
+  {
+    q: "Which Indian state has the longest coastline?",
+    options: ["Gujarat", "Tamil Nadu", "Maharashtra", "Andhra Pradesh"],
+    correct: 0
+  },
+  {
+    q: "Article 21 is related to?",
+    options: ["Education", "Life & Liberty", "Religion", "Equality"],
+    correct: 1
+  }
+];
 
 const io = new Server(server, {
   cors: {
