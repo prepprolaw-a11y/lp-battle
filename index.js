@@ -29,56 +29,26 @@ const io = new Server(server, {
     connectionStateRecovery: {} 
 });
 
-/* =========================
-   GLOBAL CACHE & SETTINGS
-========================= */
-let questionCache = [];
-const CACHE_SIZE = 50; 
-const REFRESH_INTERVAL = 60 * 60 * 1000; // 1 Hour in milliseconds
+let queue = [];
+const rooms = {};
 
 /* =========================
-   CACHE LOGIC
+    HELPER FUNCTIONS
 ========================= */
-async function refreshQuestionCache() {
+async function fetchWPQuestions() {
     try {
-        console.log(`Refreshing cache with ${CACHE_SIZE} questions...`);
-        // Request 50 questions at once from your WP API
-        const res = await axios.get(`https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions&limit=${CACHE_SIZE}`);
-        
-        if (res.data && Array.isArray(res.data)) {
-            questionCache = res.data.map(q => ({
-                q: q.question,
-                options: [q.option_a, q.option_b, q.option_c, q.option_d],
-                correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
-            }));
-            console.log("✅ Cache updated successfully.");
-        }
+        const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
+        if (!res.data || !Array.isArray(res.data)) throw new Error("Invalid Format");
+        return res.data.map(q => ({
+            q: q.question,
+            options: [q.option_a, q.option_b, q.option_c, q.option_d],
+            correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
+        }));
     } catch (err) {
-        console.error("❌ Cache Refresh Error:", err.message);
-        // Fallback if cache is empty and API fails
-        if (questionCache.length === 0) {
-            questionCache = [{ q: "Primary source of Law?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
-        }
+        console.error("❌ WP API Error:", err.message);
+        return [{ q: "What is the primary source of law in India?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
     }
 }
-
-// Helper to pick 10 random questions from the 50 in memory
-function getQuestionsFromCache() {
-    const shuffled = [...questionCache].sort(() => 0.5 - Math.random());
-    return shuffled.slice(0, 10);
-}
-
-// Initial fetch on server start
-refreshQuestionCache();
-// Set timer to refresh every hour
-setInterval(refreshQuestionCache, REFRESH_INTERVAL);
-
-/* =========================
-   UPDATED MATCH START LOGIC
-========================= */
-// Inside your join_search or start_bot_match listeners, 
-// replace 'await fetchWPQuestions()' with:
-// const questions = getQuestionsFromCache();
 
 function startQuestion(roomId) {
     const room = rooms[roomId];
@@ -164,7 +134,7 @@ io.on("connection", (socket) => {
                 players: rooms[roomId].playerData 
             });
 
-            setTimeout(() => startQuestion(roomId), 500);
+            setTimeout(() => startQuestion(roomId), 3500);
         } else {
             queue.push({ socket, userData });
         }
@@ -206,7 +176,7 @@ io.on("connection", (socket) => {
                 players: room.playerData 
             });
 
-            setTimeout(() => startQuestion(roomId), 500);
+            setTimeout(() => startQuestion(roomId), 3500);
         } else {
             socket.emit("error_msg", "Room not found or full!");
         }
@@ -235,7 +205,7 @@ io.on("connection", (socket) => {
             players: rooms[roomId].playerData 
         });
         
-        setTimeout(() => startQuestion(roomId), 500);
+        setTimeout(() => startQuestion(roomId), 1500);
     });
 
     /* --- GAMEPLAY LOGIC --- */
@@ -249,7 +219,7 @@ io.on("connection", (socket) => {
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            const botDelay = Math.random() * 500 + 200; 
+            const botDelay = Math.random() * 3000 + 2000; 
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
                 room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
