@@ -7,12 +7,6 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================
-   HEALTH CHECK (RAILWAY)
-========================= */
-app.get("/", (req, res) => res.send("OK"));
-app.get("/health", (req, res) => res.json({ status: "ok" }));
-
-/* =========================
    GLOBALS & HELPERS
 ========================= */
 let queue = [];
@@ -27,7 +21,7 @@ async function fetchWPQuestions() {
       correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
     }));
   } catch (err) {
-    console.error("❌ WP API Error:", err.message); // This catches the 400 errors
+    console.error("❌ WP API Error:", err.message);
     return [{ q: "Fallback: Article 21 is related to?", options: ["Education", "Life & Liberty", "Religion", "Equality"], correct: 1 }];
   }
 }
@@ -39,7 +33,6 @@ function botAnswer(question) {
 function removeFromQueue(socketId) {
   const idx = queue.findIndex(q => q.socket.id === socketId);
   if (idx !== -1) {
-    clearTimeout(queue[idx].timeout);
     queue.splice(idx, 1);
   }
 }
@@ -58,7 +51,10 @@ function cleanupRoom(roomId) {
 function startQuestion(roomId) {
   const room = rooms[roomId];
   if (!room) return;
+
   const question = room.questions[room.currentQuestion];
+  room.answers = {};
+  room.aiTriggered = false; // Reset AI for the new question
 
   io.to(roomId).emit("question", {
     q: question.q,
@@ -67,21 +63,14 @@ function startQuestion(roomId) {
     duration: 30
   });
 
-  if (room.isBotMatch) {
-    const delay = Math.random() * 5000 + 3000;
-    room.botTimer = setTimeout(() => {
-      if (rooms[roomId]) {
-        room.answers["BOT"] = botAnswer(question);
-        if (Object.keys(room.answers).length === 2) finishQuestion(roomId);
-      }
-    }, delay);
-  }
+  // Global timer for the question (30 seconds)
   room.timer = setTimeout(() => finishQuestion(roomId), 30000);
 }
 
 function finishQuestion(roomId) {
   const room = rooms[roomId];
   if (!room) return;
+
   clearTimeout(room.timer);
   if (room.botTimer) clearTimeout(room.botTimer);
 
@@ -114,6 +103,8 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
+  console.log("🔌 Connected:", socket.id);
+
   socket.on("join_search", async () => {
     removeFromQueue(socket.id);
     if (queue.length > 0) {
@@ -151,8 +142,22 @@ io.on("connection", (socket) => {
   socket.on("answer", ({ roomId, option }) => {
     const room = rooms[roomId];
     if (!room || room.answers[socket.id] !== undefined) return;
+
     room.answers[socket.id] = option;
-    if (Object.keys(room.answers).length === 2) finishQuestion(roomId);
+
+    // AI MODE LOGIC
+    if (room.isBotMatch && !room.aiTriggered) {
+      room.aiTriggered = true;
+      // AI answers 1.5 seconds after human to simulate "thinking"
+      room.botTimer = setTimeout(() => {
+        room.answers["BOT"] = botAnswer(room.questions[room.currentQuestion]);
+        finishQuestion(roomId); // Transition immediately after both answer
+      }, 1500);
+    } 
+    // HUMAN VS HUMAN LOGIC
+    else if (Object.keys(room.answers).length === 2) {
+      finishQuestion(roomId); // Transition immediately when both are done
+    }
   });
 
   socket.on("disconnect", () => {
