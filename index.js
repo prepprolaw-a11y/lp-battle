@@ -7,6 +7,12 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================
+   HEALTH CHECK (RAILWAY)
+========================= */
+app.get("/", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => res.json({ status: "ok" }));
+
+/* =========================
    GLOBALS & HELPERS
 ========================= */
 let queue = [];
@@ -14,7 +20,6 @@ const rooms = {};
 
 async function fetchWPQuestions() {
   try {
-    // This calls your WordPress AJAX endpoint
     const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
     return res.data.map(q => ({
       q: q.question,
@@ -22,8 +27,8 @@ async function fetchWPQuestions() {
       correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
     }));
   } catch (err) {
-    console.error("❌ WP API Error:", err.message); // This catches the 400 errors seen in logs
-    return [{ q: "Article 21 is related to?", options: ["Education", "Life & Liberty", "Religion", "Equality"], correct: 1 }];
+    console.error("❌ WP API Error:", err.message); // This catches the 400 errors
+    return [{ q: "Fallback: Article 21 is related to?", options: ["Education", "Life & Liberty", "Religion", "Equality"], correct: 1 }];
   }
 }
 
@@ -37,6 +42,14 @@ function removeFromQueue(socketId) {
     clearTimeout(queue[idx].timeout);
     queue.splice(idx, 1);
   }
+}
+
+function cleanupRoom(roomId) {
+  const room = rooms[roomId];
+  if (!room) return;
+  clearTimeout(room.timer);
+  if (room.botTimer) clearTimeout(room.botTimer);
+  delete rooms[roomId];
 }
 
 /* =========================
@@ -84,12 +97,12 @@ function finishQuestion(roomId) {
     setTimeout(() => startQuestion(roomId), 2000);
   } else {
     io.to(roomId).emit("battle_end", { scores: room.scores });
-    delete rooms[roomId];
+    cleanupRoom(roomId);
   }
 }
 
 /* =========================
-   SOCKET LOGIC (Using your custom domain)
+   SOCKET LOGIC
 ========================= */
 const io = new Server(server, {
   cors: { 
@@ -141,7 +154,17 @@ io.on("connection", (socket) => {
     room.answers[socket.id] = option;
     if (Object.keys(room.answers).length === 2) finishQuestion(roomId);
   });
+
+  socket.on("disconnect", () => {
+    removeFromQueue(socket.id);
+    for (const rid in rooms) {
+      if (rooms[rid].players.includes(socket.id)) {
+        io.to(rid).emit("battle_end", { reason: "opponent_left" });
+        cleanupRoom(rid);
+      }
+    }
+  });
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0");
+server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
