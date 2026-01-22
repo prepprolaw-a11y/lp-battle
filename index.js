@@ -1,175 +1,135 @@
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const axios = require("axios");
-
-const app = express();
-const server = http.createServer(app);
-
-/* =========================
-   GLOBALS & HELPERS
-========================= */
-let queue = [];
-const rooms = {};
-
-async function fetchWPQuestions() {
-  try {
-    const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
-    return res.data.map(q => ({
-      q: q.question,
-      options: [q.option_a, q.option_b, q.option_c, q.option_d],
-      correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
-    }));
-  } catch (err) {
-    console.error("❌ WP API Error:", err.message);
-    return [{ q: "Fallback: Article 21 is related to?", options: ["Education", "Life & Liberty", "Religion", "Equality"], correct: 1 }];
-  }
-}
-
-function botAnswer(question) {
-  return Math.random() < 0.75 ? question.correct : Math.floor(Math.random() * 4);
-}
-
-function removeFromQueue(socketId) {
-  const idx = queue.findIndex(q => q.socket.id === socketId);
-  if (idx !== -1) {
-    queue.splice(idx, 1);
-  }
-}
-
-function cleanupRoom(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
-  clearTimeout(room.timer);
-  if (room.botTimer) clearTimeout(room.botTimer);
-  delete rooms[roomId];
-}
-
-/* =========================
-   GAME ENGINE
-========================= */
-function startQuestion(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
-
-  const question = room.questions[room.currentQuestion];
-  room.answers = {};
-  room.aiTriggered = false; // Reset AI for the new question
-
-  io.to(roomId).emit("question", {
-    q: question.q,
-    options: question.options,
-    index: room.currentQuestion,
-    duration: 30
-  });
-
-  // Global timer for the question (30 seconds)
-  room.timer = setTimeout(() => finishQuestion(roomId), 30000);
-}
-
-function finishQuestion(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
-
-  clearTimeout(room.timer);
-  if (room.botTimer) clearTimeout(room.botTimer);
-
-  const question = room.questions[room.currentQuestion];
-  room.players.forEach(pid => {
-    if (room.answers[pid] === question.correct) room.scores[pid] += 10;
-  });
-
-  io.to(roomId).emit("score_update", { scores: room.scores });
-  room.currentQuestion++;
-
-  if (room.currentQuestion < room.questions.length) {
-    setTimeout(() => startQuestion(roomId), 2000);
-  } else {
-    io.to(roomId).emit("battle_end", { scores: room.scores });
-    cleanupRoom(roomId);
-  }
-}
-
-/* =========================
-   SOCKET LOGIC
-========================= */
-const io = new Server(server, {
-  cors: { 
-    origin: ["https://battle.theroyalfoundation.org.in", "https://blog.legitprep.in"], 
-    methods: ["GET", "POST"], 
-    credentials: true 
-  },
-  transports: ["websocket"]
-});
-
-io.on("connection", (socket) => {
-  console.log("🔌 Connected:", socket.id);
-
-  socket.on("join_search", async () => {
-    removeFromQueue(socket.id);
-    if (queue.length > 0) {
-      const opponentData = queue.shift();
-      const opponent = opponentData.socket;
-      const roomId = `room_${opponent.id}_${socket.id}`;
-      const questions = await fetchWPQuestions();
-      rooms[roomId] = {
-        players: [socket.id, opponent.id],
-        scores: { [socket.id]: 0, [opponent.id]: 0 },
-        questions, currentQuestion: 0, answers: {}, isBotMatch: false
-      };
-      socket.join(roomId); opponent.join(roomId);
-      io.to(roomId).emit("match_found", { room: roomId, players: [socket.id, opponent.id] });
-      startQuestion(roomId);
-    } else {
-      queue.push({ socket }); 
-    }
-  });
-
-  socket.on("start_bot_match", async () => {
-    removeFromQueue(socket.id);
-    const roomId = `ai_room_${socket.id}`;
-    const questions = await fetchWPQuestions();
-    rooms[roomId] = {
-      players: [socket.id, "BOT"],
-      scores: { [socket.id]: 0, BOT: 0 },
-      questions, currentQuestion: 0, answers: {}, isBotMatch: true
+document.addEventListener("DOMContentLoaded", () => {
+    const BATTLE_SERVER = "https://battle.theroyalfoundation.org.in";
+    const socket = io(BATTLE_SERVER, { transports: ["websocket"] });
+    let currentRoom = null, qTimer = null, sTimer = null, isMuted = false, correctIndex = null;
+    let myData = { name: "Warrior", avatar: "lion" };
+    
+    const sounds = {
+        bg: new Audio('https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3'),
+        correct: new Audio('https://assets.mixkit.co/sfx/preview/mixkit-winning-chime-2221.mp3'),
+        wrong: new Audio('https://assets.mixkit.co/sfx/preview/mixkit-incorrect-proximity-signal-1606.mp3')
     };
-    socket.join(roomId);
-    io.to(roomId).emit("match_found", { room: roomId, players: [socket.id, "BOT"] });
-    startQuestion(roomId);
-  });
+    sounds.bg.loop = true;
 
-  socket.on("answer", ({ roomId, option }) => {
-    const room = rooms[roomId];
-    if (!room || room.answers[socket.id] !== undefined) return;
+    window.toggleMute = () => {
+        isMuted = !isMuted;
+        sounds.bg.muted = isMuted;
+        document.getElementById("mute-icon").innerText = isMuted ? "🔇" : "🔊";
+    };
 
-    room.answers[socket.id] = option;
-
-    // AI MODE LOGIC
-    if (room.isBotMatch && !room.aiTriggered) {
-      room.aiTriggered = true;
-      // AI answers 1.5 seconds after human to simulate "thinking"
-      room.botTimer = setTimeout(() => {
-        room.answers["BOT"] = botAnswer(room.questions[room.currentQuestion]);
-        finishQuestion(roomId); // Transition immediately after both answer
-      }, 1500);
-    } 
-    // HUMAN VS HUMAN LOGIC
-    else if (Object.keys(room.answers).length === 2) {
-      finishQuestion(roomId); // Transition immediately when both are done
+    function showOnboarding() {
+        const avatars = ['lion', 'tiger', 'eagle', 'wolf', 'king', 'queen', 'advocate', 'titan'];
+        document.getElementById("battle-root").innerHTML = `
+            <div class="glass-card slide-up">
+                <h2 style="color:var(--neon-blue)">PLAYER PROFILE</h2>
+                <input type="text" id="p-name" placeholder="Enter Nickname" class="btn-secondary" style="margin-bottom:20px; width:100%; padding:15px; background:rgba(255,255,255,0.05); border:1px solid var(--glass-border); color:white; border-radius:12px; box-sizing:border-box; text-align:center;">
+                <div class="avatar-grid">${avatars.map(a => `<img src="https://api.dicebear.com/7.x/avataaars/svg?seed=${a}" class="avatar-option" data-id="${a}">`).join('')}</div>
+                <button onclick="saveProfile()" class="btn-primary" style="width:100%; padding:15px; border-radius:12px; background:#4f46e5; border:none; color:white; font-weight:bold; cursor:pointer;">ENTER ARENA</button>
+            </div>`;
+        
+        document.querySelectorAll(".avatar-option").forEach(img => {
+            img.onclick = () => {
+                document.querySelectorAll(".avatar-option").forEach(i => i.classList.remove("selected"));
+                img.classList.add("selected");
+                myData.avatar = img.dataset.id;
+            };
+        });
     }
-  });
 
-  socket.on("disconnect", () => {
-    removeFromQueue(socket.id);
-    for (const rid in rooms) {
-      if (rooms[rid].players.includes(socket.id)) {
-        io.to(rid).emit("battle_end", { reason: "opponent_left" });
-        cleanupRoom(rid);
-      }
+    function saveProfile() {
+        myData.name = document.getElementById("p-name").value || "Warrior";
+        if(!isMuted) sounds.bg.play().catch(() => {});
+        startSearching();
     }
-  });
+
+    function startSearching() {
+        document.getElementById("battle-root").innerHTML = `
+            <div class="glass-card">
+                <div style="width:70px; height:70px; border:4px solid var(--neon-blue); border-top-color:transparent; border-radius:50%; animation:spin 1s linear infinite; margin: 0 auto 1.5rem;"></div>
+                <h2 style="color:var(--neon-blue)">SCANNING ARENA</h2>
+                <div style="font-size:2.5rem; margin:1.5rem 0;" id="search-timer">30</div>
+            </div>`;
+        let t = 30;
+        socket.emit("join_search", myData);
+        sTimer = setInterval(() => {
+            t--; document.getElementById("search-timer").innerText = t;
+            if (t <= 0) { clearInterval(sTimer); showDecision(); }
+        }, 1000);
+    }
+
+    function showDecision() {
+        document.getElementById("battle-root").innerHTML = `
+            <div class="glass-card">
+                <h2 style="color:var(--neon-red)">ARENA EMPTY</h2>
+                <button class="btn-primary" onclick="startSearching()" style="width:100%; margin-bottom:10px;">🔄 RETRY SEARCH</button>
+                <button class="btn-secondary" onclick="socket.emit('start_bot_match', myData)">🤖 CHALLENGE AI</button>
+            </div>`;
+    }
+
+    socket.on("match_found", data => {
+        clearInterval(sTimer); currentRoom = data.room;
+        document.getElementById("battle-root").innerHTML = `
+            <div style="width:100%; height:100%; display:flex; flex-direction:column; justify-content:center; align-items:center;">
+                <div class="hud-header">
+                    <div style="width:40%"><div style="font-size:0.8rem">YOU <span id="y-sc">0</span></div><div class="hp-bar"><div id="y-bar" class="hp-fill you-fill"></div></div></div>
+                    <div class="timer-orb" id="q-timer">30</div>
+                    <div style="width:40%; text-align:right;"><div style="font-size:0.8rem">OPPONENT <span id="o-sc">0</span></div><div class="hp-bar"><div id="o-bar" class="hp-fill opp-fill"></div></div></div>
+                </div>
+                <div class="glass-card" style="max-width:800px; width:95%;"><h3 id="q-txt">Waiting...</h3><div id="options-grid"></div></div>
+            </div>`;
+    });
+
+    socket.on("question", data => {
+        correctIndex = data.correctIndex; 
+        document.getElementById("q-txt").innerText = data.q;
+        const grid = document.getElementById("options-grid"); grid.innerHTML = "";
+        
+        data.options.forEach((opt, i) => {
+            const b = document.createElement("button"); b.className="option-btn";
+            b.innerHTML = `<span class="opt-label">${String.fromCharCode(65+i)}</span> ${opt}`;
+            b.onclick = () => {
+                socket.emit("answer", { roomId: currentRoom, option: i });
+                document.querySelectorAll(".option-btn").forEach(btn => btn.disabled = true);
+                
+                // Red/Green Feedback & Sound
+                if (i === correctIndex) {
+                    b.classList.add("correct");
+                    if(!isMuted) sounds.correct.play();
+                } else {
+                    b.classList.add("wrong");
+                    if(!isMuted) sounds.wrong.play();
+                }
+            };
+            grid.appendChild(b);
+        });
+        
+        let t = 30; clearInterval(qTimer);
+        qTimer = setInterval(() => { 
+            t--; document.getElementById("q-timer").innerText = t; 
+            if(t<=0) clearInterval(qTimer); 
+        }, 1000);
+    });
+
+    socket.on("score_update", d => {
+        const mySc = d.scores[socket.id] || 0;
+        const oppSc = Object.values(d.scores).find(s => s !== mySc) || 0;
+        document.getElementById("y-sc").innerText = mySc;
+        document.getElementById("o-sc").innerText = oppSc;
+        document.getElementById("y-bar").style.width = Math.min(mySc, 100) + "%";
+        document.getElementById("o-bar").style.width = Math.min(oppSc, 100) + "%";
+    });
+
+    socket.on("battle_end", d => {
+        const mySc = d.scores[socket.id] || 0;
+        const oppSc = Object.values(d.scores).find(s => s !== mySc) || 0;
+        const win = mySc > oppSc;
+        document.getElementById("battle-root").innerHTML = `
+            <div class="glass-card victory-card slide-up" style="border-color:${win?'var(--neon-green)':'var(--neon-red)'}">
+                <h1 style="color:${win?'var(--neon-green)':'var(--neon-red)'}">${win?'VICTORY':'DEFEAT'}</h1>
+                <p>Final Score: ${mySc} — ${oppSc}</p>
+                <button class="btn-primary" onclick="location.reload()">PLAY AGAIN</button>
+            </div>`;
+    });
+
+    showOnboarding();
 });
-
-const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
