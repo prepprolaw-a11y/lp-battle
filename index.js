@@ -42,24 +42,24 @@ function cleanupRoom(roomId) {
    GAME ENGINE
 ========================= */
 function startQuestion(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
+    const room = rooms[roomId];
+    if (!room) return;
 
-  const question = room.questions[room.currentQuestion];
-  room.answers = {};
-  room.aiTriggered = false;
+    const question = room.questions[room.currentQuestion];
+    room.answers = {};
+    room.aiTriggered = false;
 
-  io.to(roomId).emit("question", {
-    q: question.q,
-    options: question.options,
-    index: room.currentQuestion,
-    duration: 30,
-    correctIndex: question.correct // ✅ Send correct index for instant colors/sounds
-  });
+    // ✅ MUST include correct index here for instant client feedback
+    io.to(roomId).emit("question", {
+        q: question.q,
+        options: question.options,
+        index: room.currentQuestion,
+        duration: 30,
+        correctIndex: question.correct // Send this to the client
+    });
 
-  room.timer = setTimeout(() => finishQuestion(roomId), 30000);
+    room.timer = setTimeout(() => finishQuestion(roomId), 30000);
 }
-
 function finishQuestion(roomId) {
   const room = rooms[roomId];
   if (!room) return;
