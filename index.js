@@ -7,20 +7,37 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================
+   HEALTH CHECK (RAILWAY)
+========================= */
+app.get("/", (req, res) => res.send("OK"));
+app.get("/health", (req, res) => res.json({ status: "ok" }));
+
+/* =========================
    GLOBALS & HELPERS
 ========================= */
 let queue = [];
 const rooms = {};
 
+/**
+ * Fetches questions from WordPress AJAX endpoint
+ */
 async function fetchWPQuestions() {
   try {
+    // Note: ensure the 'action' parameter is recognized by your WP plugin
     const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
+    
+    if (!res.data || !Array.isArray(res.data)) {
+        throw new Error("Invalid API response format");
+    }
+
     return res.data.map(q => ({
       q: q.question,
       options: [q.option_a, q.option_b, q.option_c, q.option_d],
       correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
     }));
   } catch (err) {
+    console.error("❌ WP API Error:", err.message);
+    // Fallback static questions to prevent game crashes
     return [
       { q: "Fallback: Which Article relates to Life & Liberty?", options: ["Art 14", "Art 21", "Art 19", "Art 32"], correct: 1 }
     ];
@@ -28,7 +45,8 @@ async function fetchWPQuestions() {
 }
 
 function botAnswer(question) {
-  return Math.random() < 0.75 ? question.correct : Math.floor(Math.random() * 4);
+  const accuracy = 0.75; // 75% correct
+  return Math.random() < accuracy ? question.correct : Math.floor(Math.random() * 4);
 }
 
 function removeFromQueue(socketId) {
@@ -64,7 +82,7 @@ function startQuestion(roomId) {
   });
 
   if (room.isBotMatch) {
-    const delay = Math.random() * 7000 + 3000;
+    const delay = Math.random() * 7000 + 3000; // Bot responds in 3-10s
     room.botTimer = setTimeout(() => {
       if (rooms[roomId] && !room.answers["BOT"]) {
         room.answers["BOT"] = botAnswer(question);
@@ -101,11 +119,17 @@ function finishQuestion(roomId) {
    SOCKET LOGIC
 ========================= */
 const io = new Server(server, {
-  cors: { origin: ["https://battle.theroyalfoundation.org.in", "https://blog.legitprep.in"], methods: ["GET", "POST"], credentials: true },
+  cors: { 
+    origin: ["https://battle.theroyalfoundation.org.in", "https://blog.legitprep.in"], 
+    methods: ["GET", "POST"], 
+    credentials: true 
+  },
   transports: ["websocket"]
 });
 
 io.on("connection", (socket) => {
+  console.log("🔌 Connected:", socket.id);
+
   socket.on("join_search", async () => {
     removeFromQueue(socket.id);
     if (queue.length > 0) {
@@ -122,7 +146,6 @@ io.on("connection", (socket) => {
       io.to(roomId).emit("match_found", { room: roomId, players: [socket.id, opponent.id] });
       startQuestion(roomId);
     } else {
-      // 30s manual wait is handled on frontend, so we just queue the player here
       queue.push({ socket }); 
     }
   });
@@ -149,6 +172,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("rematch", () => socket.emit("join_search"));
+
   socket.on("disconnect", () => {
     removeFromQueue(socket.id);
     for (const rid in rooms) {
