@@ -39,7 +39,7 @@ function cleanupRoom(roomId) {
 }
 
 /* =========================
-   GAME FLOW (IMMEDIATE TRANSITIONS)
+   GAME ENGINE
 ========================= */
 function startQuestion(roomId) {
   const room = rooms[roomId];
@@ -54,7 +54,7 @@ function startQuestion(roomId) {
     options: question.options,
     index: room.currentQuestion,
     duration: 30,
-    correctIndex: question.correct // ✅ REQUIRED FOR RED/GREEN FEEDBACK
+    correctIndex: question.correct // ✅ Send correct index for instant colors/sounds
   });
 
   room.timer = setTimeout(() => finishQuestion(roomId), 30000);
@@ -72,7 +72,7 @@ function finishQuestion(roomId) {
     if (room.answers[pid] === question.correct) room.scores[pid] += 10;
   });
 
-  // ✅ LIVE SCORE UPDATE
+  // ✅ Send live scores so bars/text update
   io.to(roomId).emit("score_update", { scores: room.scores });
   room.currentQuestion++;
 
@@ -138,13 +138,13 @@ io.on("connection", (socket) => {
       room.aiTriggered = true;
       room.botTimer = setTimeout(() => {
         room.answers["BOT"] = botAnswer(room.questions[room.currentQuestion]);
-        finishQuestion(roomId);
+        finishQuestion(roomId); // ✅ AI Reacts immediately
       }, 1500);
     } else if (Object.keys(room.answers).length === 2) {
-      finishQuestion(roomId);
+      finishQuestion(roomId); // ✅ Humans move immediately
     }
   });
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
+server.listen(PORT, "0.0.0.0");
