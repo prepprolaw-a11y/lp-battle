@@ -4,46 +4,52 @@ const { Server } = require("socket.io");
 const axios = require("axios");
 
 const app = express();
+const server = http.createServer(app);
 
-// IMPORTANT: Railway needs to see your app is alive.
-// This health check prevents Railway from killing the container.
+/** * CRITICAL: Health Check & Root Route
+ * Railway needs to receive a 200 OK from the root to mark the container as 'Healthy'.
+ */
 app.get("/", (req, res) => {
-    res.send("Battle Server is Running!");
+    res.status(200).send("Battle Server is Live and Running!");
 });
 
 app.get("/health", (req, res) => {
     res.status(200).send("OK");
 });
 
-const server = http.createServer(app);
-
-// Socket.io setup with proper CORS for your domains
+// Socket.io with production-ready CORS and stability fallbacks
 const io = new Server(server, {
     cors: {
         origin: [
-            "https://battle.theroyalfoundation.org.in", 
+            "https://battle.theroyalfoundation.org.in",
             "https://blog.legitprep.in"
         ],
         methods: ["GET", "POST"],
         credentials: true
     },
-    transports: ["websocket", "polling"] // Allow fallback for better stability
+    transports: ["websocket", "polling"], // Polling allows connection even if Websockets are blocked
+    connectionStateRecovery: {} // Helps mobile users stay connected during small signal drops
 });
 
 let queue = [];
 const rooms = {};
 
+/* =========================
+   HELPER FUNCTIONS
+========================= */
 async function fetchWPQuestions() {
     try {
         const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
-        if (!res.data || !Array.isArray(res.data)) throw new Error("Invalid Data");
+        if (!res.data || !Array.isArray(res.data)) throw new Error("Invalid Format");
         return res.data.map(q => ({
             q: q.question,
             options: [q.option_a, q.option_b, q.option_c, q.option_d],
             correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
         }));
     } catch (err) {
-        return [{ q: "What is the capital of India?", options: ["Delhi", "Mumbai", "Kolkata", "Chennai"], correct: 0 }];
+        console.error("❌ WP API Error:", err.message);
+        // Fallback question if API fails
+        return [{ q: "What is the primary source of law in India?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
     }
 }
 
@@ -58,11 +64,11 @@ function startQuestion(roomId) {
     io.to(roomId).emit("question", {
         q: question.q,
         options: question.options,
-        correctIndex: question.correct, // Client uses this for instant FX
+        correctIndex: question.correct, // Crucial for instant client-side feedback
         index: room.currentQuestion
     });
 
-    // Auto-advance if no one answers in 30s
+    // Reset timer for 30 seconds
     room.timer = setTimeout(() => finishQuestion(roomId), 30000);
 }
 
@@ -84,32 +90,36 @@ function finishQuestion(roomId) {
     room.currentQuestion++;
 
     if (room.currentQuestion < room.questions.length) {
-        setTimeout(() => startQuestion(roomId), 2000);
+        setTimeout(() => startQuestion(roomId), 2500); // 2.5s gap between questions
     } else {
         io.to(roomId).emit("battle_end", { scores: room.scores });
         delete rooms[roomId];
     }
 }
 
+/* =========================
+   SOCKET LOGIC
+========================= */
 io.on("connection", (socket) => {
     socket.on("join_search", async (userData) => {
-        // Remove existing queue entry if any to avoid duplicates
+        // Prevent duplicate entries in queue
         queue = queue.filter(item => item.socket.id !== socket.id);
 
         if (queue.length > 0) {
-            const opp = queue.shift();
-            const roomId = `room_${opp.socket.id}_${socket.id}`;
+            const opponentData = queue.shift();
+            const opponent = opponentData.socket;
+            const roomId = `room_${opponent.id}_${socket.id}`;
             const questions = await fetchWPQuestions();
-            
+
             rooms[roomId] = {
-                players: [socket.id, opp.socket.id],
-                scores: { [socket.id]: 0, [opp.socket.id]: 0 },
+                players: [socket.id, opponent.id],
+                scores: { [socket.id]: 0, [opponent.id]: 0 },
                 questions, currentQuestion: 0, answers: {}, isBotMatch: false
             };
 
-            socket.join(roomId); opp.socket.join(roomId);
+            socket.join(roomId); opponent.join(roomId);
             io.to(roomId).emit("match_found", { room: roomId });
-            setTimeout(() => startQuestion(roomId), 1000);
+            setTimeout(() => startQuestion(roomId), 1500);
         } else {
             queue.push({ socket, userData });
         }
@@ -136,12 +146,12 @@ io.on("connection", (socket) => {
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            const delay = Math.random() * 3000 + 2000; // Bot answers in 2-5 seconds
+            const botDelay = Math.random() * 3000 + 2000; // Bot takes 2-5 seconds
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
-                room.answers["BOT"] = Math.random() < 0.8 ? q.correct : Math.floor(Math.random() * 4);
+                room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
                 finishQuestion(roomId);
-            }, delay);
+            }, botDelay);
         } else if (Object.keys(room.answers).length === room.players.length) {
             finishQuestion(roomId);
         }
@@ -152,8 +162,11 @@ io.on("connection", (socket) => {
     });
 });
 
-// CRITICAL FIX: Ensure the server binds to 0.0.0.0 and uses process.env.PORT
+/* =========================
+   SERVER STARTUP
+========================= */
+// CRITICAL: Railway uses process.env.PORT. Must bind to 0.0.0.0.
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server on port ${PORT}`);
+    console.log(`🚀 Battle Server running on port ${PORT}`);
 });
