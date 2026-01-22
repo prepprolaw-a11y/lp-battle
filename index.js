@@ -19,13 +19,14 @@ const io = new Server(server, {
     cors: {
         origin: [
             "https://battle.theroyalfoundation.org.in",
-            "https://blog.legitprep.in"
+            "https://blog.legitprep.in",
+            "https://blog.legitprep.in/quiz-battle/"
         ],
         methods: ["GET", "POST"],
         credentials: true
     },
     transports: ["websocket", "polling"],
-    connectionStateRecovery: {} // Keeps mobile users connected during signal drops
+    connectionStateRecovery: {} 
 });
 
 let queue = [];
@@ -56,7 +57,7 @@ function startQuestion(roomId) {
     const question = room.questions[room.currentQuestion];
     room.answers = {};
     room.aiTriggered = false;
-    room.questionStartTime = Date.now(); // For speed bonus calculation
+    room.questionStartTime = Date.now(); 
 
     io.to(roomId).emit("question", {
         q: question.q,
@@ -76,11 +77,10 @@ function finishQuestion(roomId) {
     if (room.botTimer) clearTimeout(room.botTimer);
 
     const question = room.questions[room.currentQuestion];
-    const endTime = Date.now();
 
     room.players.forEach(pid => {
         if (room.answers[pid] === question.correct) {
-            // Speed Bonus: 15 points if answered in < 7 seconds, else 10
+            // SPEED BONUS LOGIC: 15 points for fast answers (< 7s), 10 for slow
             const reactionTime = (room.answerTimes && room.answerTimes[pid]) ? (room.answerTimes[pid] - room.questionStartTime) : 30000;
             const points = reactionTime < 7000 ? 15 : 10;
             room.scores[pid] = (room.scores[pid] || 0) + points;
@@ -91,7 +91,8 @@ function finishQuestion(roomId) {
     room.currentQuestion++;
 
     if (room.currentQuestion < room.questions.length) {
-        setTimeout(() => startQuestion(roomId), 500);
+        // Short gap between questions for smooth transitions
+        setTimeout(() => startQuestion(roomId), 800);
     } else {
         io.to(roomId).emit("battle_end", { scores: room.scores });
         delete rooms[roomId];
@@ -104,7 +105,6 @@ function finishQuestion(roomId) {
 io.on("connection", (socket) => {
     
     socket.on("join_search", async (userData) => {
-        // Clean queue of existing socket to prevent duplicates
         queue = queue.filter(item => item.socket.id !== socket.id);
 
         if (queue.length > 0) {
@@ -129,13 +129,13 @@ io.on("connection", (socket) => {
             socket.join(roomId); 
             opp.socket.join(roomId);
 
-            // Broadcast match with BOTH players' profile data
             io.to(roomId).emit("match_found", { 
                 room: roomId, 
                 players: rooms[roomId].playerData 
             });
 
-            setTimeout(() => startQuestion(roomId), 2000);
+            // FIXED: Wait exactly 3.5 seconds to let the Client "VS Animation" finish
+            setTimeout(() => startQuestion(roomId), 3500);
         } else {
             queue.push({ socket, userData });
         }
@@ -162,7 +162,9 @@ io.on("connection", (socket) => {
             room: roomId, 
             players: rooms[roomId].playerData 
         });
-        setTimeout(() => startQuestion(roomId), 500);
+        
+        // Bots start faster
+        setTimeout(() => startQuestion(roomId), 1500);
     });
 
     socket.on("answer", ({ roomId, option }) => {
@@ -175,11 +177,9 @@ io.on("connection", (socket) => {
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            // Bot thinks for 2-5 seconds
-            const botDelay = Math.random() * 3000 + 2000;
+            const botDelay = Math.random() * 3000 + 2000; 
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
-                // Bot has 75% accuracy
                 room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
                 room.answerTimes["BOT"] = Date.now();
                 finishQuestion(roomId);
