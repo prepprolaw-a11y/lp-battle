@@ -134,7 +134,7 @@ io.on("connection", (socket) => {
                 players: rooms[roomId].playerData 
             });
 
-            setTimeout(() => startQuestion(roomId), 3500);
+            setTimeout(() => startQuestion(roomId), 500);
         } else {
             queue.push({ socket, userData });
         }
@@ -176,7 +176,7 @@ io.on("connection", (socket) => {
                 players: room.playerData 
             });
 
-            setTimeout(() => startQuestion(roomId), 3500);
+            setTimeout(() => startQuestion(roomId), 500);
         } else {
             socket.emit("error_msg", "Room not found or full!");
         }
@@ -205,7 +205,7 @@ io.on("connection", (socket) => {
             players: rooms[roomId].playerData 
         });
         
-        setTimeout(() => startQuestion(roomId), 1500);
+        setTimeout(() => startQuestion(roomId), 500);
     });
 
     /* --- GAMEPLAY LOGIC --- */
@@ -219,7 +219,7 @@ io.on("connection", (socket) => {
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            const botDelay = Math.random() * 3000 + 2000; 
+            const botDelay = Math.random() * 500 + 200; 
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
                 room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
