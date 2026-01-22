@@ -7,13 +7,13 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================
-   HEALTH CHECKS (For Railway)
+    HEALTH CHECKS (For Railway)
 ========================= */
 app.get("/", (req, res) => res.status(200).send("Battle Server is Live and Running!"));
 app.get("/health", (req, res) => res.status(200).send("OK"));
 
 /* =========================
-   SOCKET.IO CONFIGURATION
+    SOCKET.IO CONFIGURATION
 ========================= */
 const io = new Server(server, {
     cors: {
@@ -33,7 +33,7 @@ let queue = [];
 const rooms = {};
 
 /* =========================
-   HELPER FUNCTIONS
+    HELPER FUNCTIONS
 ========================= */
 async function fetchWPQuestions() {
     try {
@@ -91,7 +91,6 @@ function finishQuestion(roomId) {
     room.currentQuestion++;
 
     if (room.currentQuestion < room.questions.length) {
-        // Short gap between questions for smooth transitions
         setTimeout(() => startQuestion(roomId), 800);
     } else {
         io.to(roomId).emit("battle_end", { scores: room.scores });
@@ -100,10 +99,11 @@ function finishQuestion(roomId) {
 }
 
 /* =========================
-   SOCKET LOGIC
+    SOCKET LOGIC
 ========================= */
 io.on("connection", (socket) => {
     
+    /* --- PUBLIC MATCHMAKING --- */
     socket.on("join_search", async (userData) => {
         queue = queue.filter(item => item.socket.id !== socket.id);
 
@@ -134,13 +134,55 @@ io.on("connection", (socket) => {
                 players: rooms[roomId].playerData 
             });
 
-            // FIXED: Wait exactly 3.5 seconds to let the Client "VS Animation" finish
             setTimeout(() => startQuestion(roomId), 3500);
         } else {
             queue.push({ socket, userData });
         }
     });
 
+    /* --- PRIVATE ROOM LOGIC --- */
+    socket.on("create_private_room", async (userData) => {
+        const roomCode = Math.random().toString(36).substring(2, 7).toUpperCase(); 
+        const roomId = `private_${roomCode}`;
+        
+        rooms[roomId] = {
+            players: [socket.id],
+            playerData: { [socket.id]: userData },
+            scores: { [socket.id]: 0 },
+            answerTimes: {},
+            questions: await fetchWPQuestions(),
+            currentQuestion: 0,
+            answers: {},
+            isPrivate: true,
+            roomCode: roomCode
+        };
+
+        socket.join(roomId);
+        socket.emit("room_created", { roomCode });
+    });
+
+    socket.on("join_private_room", ({ roomCode, userData }) => {
+        const roomId = `private_${roomCode.toUpperCase()}`;
+        const room = rooms[roomId];
+
+        if (room && room.players.length === 1) {
+            room.players.push(socket.id);
+            room.playerData[socket.id] = userData;
+            room.scores[socket.id] = 0;
+
+            socket.join(roomId);
+            io.to(roomId).emit("match_found", { 
+                room: roomId, 
+                players: room.playerData 
+            });
+
+            setTimeout(() => startQuestion(roomId), 3500);
+        } else {
+            socket.emit("error_msg", "Room not found or full!");
+        }
+    });
+
+    /* --- BOT MATCH LOGIC --- */
     socket.on("start_bot_match", async (userData) => {
         const roomId = `ai_${socket.id}`;
         const questions = await fetchWPQuestions();
@@ -163,10 +205,10 @@ io.on("connection", (socket) => {
             players: rooms[roomId].playerData 
         });
         
-        // Bots start faster
         setTimeout(() => startQuestion(roomId), 1500);
     });
 
+    /* --- GAMEPLAY LOGIC --- */
     socket.on("answer", ({ roomId, option }) => {
         const room = rooms[roomId];
         if (!room || room.answers[socket.id] !== undefined) return;
@@ -195,7 +237,7 @@ io.on("connection", (socket) => {
 });
 
 /* =========================
-   SERVER STARTUP
+    SERVER STARTUP
 ========================= */
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
