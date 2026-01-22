@@ -205,7 +205,7 @@ io.on("connection", (socket) => {
             players: rooms[roomId].playerData 
         });
         
-        setTimeout(() => startQuestion(roomId), 1500);
+        setTimeout(() => startQuestion(roomId), 500);
     });
 
     /* --- GAMEPLAY LOGIC --- */
@@ -219,10 +219,10 @@ io.on("connection", (socket) => {
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            const botDelay = Math.random() * 3000 + 2000; 
+            const botDelay = Math.random() * 300 + 200; 
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
-                room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
+                room.answers["BOT"] = Math.random() < 0.65 ? q.correct : Math.floor(Math.random() * 4);
                 room.answerTimes["BOT"] = Date.now();
                 finishQuestion(roomId);
             }, botDelay);
