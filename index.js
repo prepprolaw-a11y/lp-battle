@@ -91,7 +91,7 @@ function finishQuestion(roomId) {
     room.currentQuestion++;
 
     if (room.currentQuestion < room.questions.length) {
-        setTimeout(() => startQuestion(roomId), 2500);
+        setTimeout(() => startQuestion(roomId), 500);
     } else {
         io.to(roomId).emit("battle_end", { scores: room.scores });
         delete rooms[roomId];
@@ -162,7 +162,7 @@ io.on("connection", (socket) => {
             room: roomId, 
             players: rooms[roomId].playerData 
         });
-        setTimeout(() => startQuestion(roomId), 1500);
+        setTimeout(() => startQuestion(roomId), 500);
     });
 
     socket.on("answer", ({ roomId, option }) => {
