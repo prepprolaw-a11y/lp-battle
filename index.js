@@ -39,7 +39,7 @@ function cleanupRoom(roomId) {
 }
 
 /* =========================
-   GAME FLOW
+   GAME FLOW (IMMEDIATE TRANSITIONS)
 ========================= */
 function startQuestion(roomId) {
   const room = rooms[roomId];
@@ -54,7 +54,7 @@ function startQuestion(roomId) {
     options: question.options,
     index: room.currentQuestion,
     duration: 30,
-    correctIndex: question.correct // Send correct index for client-side feedback
+    correctIndex: question.correct // ✅ REQUIRED FOR RED/GREEN FEEDBACK
   });
 
   room.timer = setTimeout(() => finishQuestion(roomId), 30000);
@@ -72,6 +72,7 @@ function finishQuestion(roomId) {
     if (room.answers[pid] === question.correct) room.scores[pid] += 10;
   });
 
+  // ✅ LIVE SCORE UPDATE
   io.to(roomId).emit("score_update", { scores: room.scores });
   room.currentQuestion++;
 
@@ -98,7 +99,8 @@ const io = new Server(server, {
 io.on("connection", (socket) => {
   socket.on("join_search", async (userData) => {
     if (queue.length > 0) {
-      const opponent = queue.shift().socket;
+      const opponentData = queue.shift();
+      const opponent = opponentData.socket;
       const roomId = `room_${opponent.id}_${socket.id}`;
       const questions = await fetchWPQuestions();
       rooms[roomId] = {
