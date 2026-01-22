@@ -29,26 +29,56 @@ const io = new Server(server, {
     connectionStateRecovery: {} 
 });
 
-let queue = [];
-const rooms = {};
+/* =========================
+   GLOBAL CACHE & SETTINGS
+========================= */
+let questionCache = [];
+const CACHE_SIZE = 50; 
+const REFRESH_INTERVAL = 60 * 60 * 1000; // 1 Hour in milliseconds
 
 /* =========================
-    HELPER FUNCTIONS
+   CACHE LOGIC
 ========================= */
-async function fetchWPQuestions() {
+async function refreshQuestionCache() {
     try {
-        const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
-        if (!res.data || !Array.isArray(res.data)) throw new Error("Invalid Format");
-        return res.data.map(q => ({
-            q: q.question,
-            options: [q.option_a, q.option_b, q.option_c, q.option_d],
-            correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
-        }));
+        console.log(`Refreshing cache with ${CACHE_SIZE} questions...`);
+        // Request 50 questions at once from your WP API
+        const res = await axios.get(`https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions&limit=${CACHE_SIZE}`);
+        
+        if (res.data && Array.isArray(res.data)) {
+            questionCache = res.data.map(q => ({
+                q: q.question,
+                options: [q.option_a, q.option_b, q.option_c, q.option_d],
+                correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
+            }));
+            console.log("✅ Cache updated successfully.");
+        }
     } catch (err) {
-        console.error("❌ WP API Error:", err.message);
-        return [{ q: "What is the primary source of law in India?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
+        console.error("❌ Cache Refresh Error:", err.message);
+        // Fallback if cache is empty and API fails
+        if (questionCache.length === 0) {
+            questionCache = [{ q: "Primary source of Law?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
+        }
     }
 }
+
+// Helper to pick 10 random questions from the 50 in memory
+function getQuestionsFromCache() {
+    const shuffled = [...questionCache].sort(() => 0.5 - Math.random());
+    return shuffled.slice(0, 10);
+}
+
+// Initial fetch on server start
+refreshQuestionCache();
+// Set timer to refresh every hour
+setInterval(refreshQuestionCache, REFRESH_INTERVAL);
+
+/* =========================
+   UPDATED MATCH START LOGIC
+========================= */
+// Inside your join_search or start_bot_match listeners, 
+// replace 'await fetchWPQuestions()' with:
+// const questions = getQuestionsFromCache();
 
 function startQuestion(roomId) {
     const room = rooms[roomId];
