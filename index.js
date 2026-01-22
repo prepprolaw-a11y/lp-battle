@@ -4,13 +4,30 @@ const { Server } = require("socket.io");
 const axios = require("axios");
 
 const app = express();
-// Railway Health Check - Prevents the SIGTERM crash
-app.get("/health", (req, res) => res.status(200).send("OK"));
+
+// IMPORTANT: Railway needs to see your app is alive.
+// This health check prevents Railway from killing the container.
+app.get("/", (req, res) => {
+    res.send("Battle Server is Running!");
+});
+
+app.get("/health", (req, res) => {
+    res.status(200).send("OK");
+});
 
 const server = http.createServer(app);
+
+// Socket.io setup with proper CORS for your domains
 const io = new Server(server, {
-    cors: { origin: "*", methods: ["GET", "POST"] },
-    transports: ["websocket"]
+    cors: {
+        origin: [
+            "https://battle.theroyalfoundation.org.in", 
+            "https://blog.legitprep.in"
+        ],
+        methods: ["GET", "POST"],
+        credentials: true
+    },
+    transports: ["websocket", "polling"] // Allow fallback for better stability
 });
 
 let queue = [];
@@ -135,5 +152,8 @@ io.on("connection", (socket) => {
     });
 });
 
+// CRITICAL FIX: Ensure the server binds to 0.0.0.0 and uses process.env.PORT
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => console.log(`🚀 Server on ${PORT}`));
+server.listen(PORT, "0.0.0.0", () => {
+    console.log(`🚀 Server on port ${PORT}`);
+});
