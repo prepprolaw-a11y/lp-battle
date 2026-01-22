@@ -6,18 +6,15 @@ const axios = require("axios");
 const app = express();
 const server = http.createServer(app);
 
-/** * CRITICAL: Health Check & Root Route
- * Railway needs to receive a 200 OK from the root to mark the container as 'Healthy'.
- */
-app.get("/", (req, res) => {
-    res.status(200).send("Battle Server is Live and Running!");
-});
+/* =========================
+   HEALTH CHECKS (For Railway)
+========================= */
+app.get("/", (req, res) => res.status(200).send("Battle Server is Live and Running!"));
+app.get("/health", (req, res) => res.status(200).send("OK"));
 
-app.get("/health", (req, res) => {
-    res.status(200).send("OK");
-});
-
-// Socket.io with production-ready CORS and stability fallbacks
+/* =========================
+   SOCKET.IO CONFIGURATION
+========================= */
 const io = new Server(server, {
     cors: {
         origin: [
@@ -27,8 +24,8 @@ const io = new Server(server, {
         methods: ["GET", "POST"],
         credentials: true
     },
-    transports: ["websocket", "polling"], // Polling allows connection even if Websockets are blocked
-    connectionStateRecovery: {} // Helps mobile users stay connected during small signal drops
+    transports: ["websocket", "polling"],
+    connectionStateRecovery: {} // Keeps mobile users connected during signal drops
 });
 
 let queue = [];
@@ -48,7 +45,6 @@ async function fetchWPQuestions() {
         }));
     } catch (err) {
         console.error("❌ WP API Error:", err.message);
-        // Fallback question if API fails
         return [{ q: "What is the primary source of law in India?", options: ["Constitution", "Custom", "Precedent", "Statute"], correct: 0 }];
     }
 }
@@ -60,15 +56,15 @@ function startQuestion(roomId) {
     const question = room.questions[room.currentQuestion];
     room.answers = {};
     room.aiTriggered = false;
+    room.questionStartTime = Date.now(); // For speed bonus calculation
 
     io.to(roomId).emit("question", {
         q: question.q,
         options: question.options,
-        correctIndex: question.correct, // Crucial for instant client-side feedback
+        correctIndex: question.correct,
         index: room.currentQuestion
     });
 
-    // Reset timer for 30 seconds
     room.timer = setTimeout(() => finishQuestion(roomId), 30000);
 }
 
@@ -80,9 +76,14 @@ function finishQuestion(roomId) {
     if (room.botTimer) clearTimeout(room.botTimer);
 
     const question = room.questions[room.currentQuestion];
+    const endTime = Date.now();
+
     room.players.forEach(pid => {
         if (room.answers[pid] === question.correct) {
-            room.scores[pid] = (room.scores[pid] || 0) + 10;
+            // Speed Bonus: 15 points if answered in < 7 seconds, else 10
+            const reactionTime = (room.answerTimes && room.answerTimes[pid]) ? (room.answerTimes[pid] - room.questionStartTime) : 30000;
+            const points = reactionTime < 7000 ? 15 : 10;
+            room.scores[pid] = (room.scores[pid] || 0) + points;
         }
     });
 
@@ -90,7 +91,7 @@ function finishQuestion(roomId) {
     room.currentQuestion++;
 
     if (room.currentQuestion < room.questions.length) {
-        setTimeout(() => startQuestion(roomId), 2500); // 2.5s gap between questions
+        setTimeout(() => startQuestion(roomId), 2500);
     } else {
         io.to(roomId).emit("battle_end", { scores: room.scores });
         delete rooms[roomId];
@@ -101,55 +102,86 @@ function finishQuestion(roomId) {
    SOCKET LOGIC
 ========================= */
 io.on("connection", (socket) => {
+    
     socket.on("join_search", async (userData) => {
-        // Prevent duplicate entries in queue
+        // Clean queue of existing socket to prevent duplicates
         queue = queue.filter(item => item.socket.id !== socket.id);
 
         if (queue.length > 0) {
-            const opponentData = queue.shift();
-            const opponent = opponentData.socket;
-            const roomId = `room_${opponent.id}_${socket.id}`;
+            const opp = queue.shift();
+            const roomId = `room_${opp.socket.id}_${socket.id}`;
             const questions = await fetchWPQuestions();
 
             rooms[roomId] = {
-                players: [socket.id, opponent.id],
-                scores: { [socket.id]: 0, [opponent.id]: 0 },
-                questions, currentQuestion: 0, answers: {}, isBotMatch: false
+                players: [socket.id, opp.socket.id],
+                playerData: { 
+                    [socket.id]: userData, 
+                    [opp.socket.id]: opp.userData 
+                },
+                scores: { [socket.id]: 0, [opp.socket.id]: 0 },
+                answerTimes: {},
+                questions, 
+                currentQuestion: 0, 
+                answers: {},
+                isBotMatch: false
             };
 
-            socket.join(roomId); opponent.join(roomId);
-            io.to(roomId).emit("match_found", { room: roomId });
-            setTimeout(() => startQuestion(roomId), 1500);
+            socket.join(roomId); 
+            opp.socket.join(roomId);
+
+            // Broadcast match with BOTH players' profile data
+            io.to(roomId).emit("match_found", { 
+                room: roomId, 
+                players: rooms[roomId].playerData 
+            });
+
+            setTimeout(() => startQuestion(roomId), 2000);
         } else {
             queue.push({ socket, userData });
         }
     });
 
-    socket.on("start_bot_match", async () => {
+    socket.on("start_bot_match", async (userData) => {
         const roomId = `ai_${socket.id}`;
         const questions = await fetchWPQuestions();
+        const botData = { name: "AI Bot", avatar: "titan" };
+        
         rooms[roomId] = {
             players: [socket.id, "BOT"],
+            playerData: { [socket.id]: userData, "BOT": botData },
             scores: { [socket.id]: 0, BOT: 0 },
-            questions, currentQuestion: 0, answers: {}, isBotMatch: true
+            answerTimes: {},
+            questions, 
+            currentQuestion: 0, 
+            answers: {}, 
+            isBotMatch: true
         };
+
         socket.join(roomId);
-        io.to(roomId).emit("match_found", { room: roomId });
-        startQuestion(roomId);
+        io.to(roomId).emit("match_found", { 
+            room: roomId, 
+            players: rooms[roomId].playerData 
+        });
+        setTimeout(() => startQuestion(roomId), 1500);
     });
 
     socket.on("answer", ({ roomId, option }) => {
         const room = rooms[roomId];
         if (!room || room.answers[socket.id] !== undefined) return;
-        
+
         room.answers[socket.id] = option;
+        room.answerTimes = room.answerTimes || {};
+        room.answerTimes[socket.id] = Date.now();
 
         if (room.isBotMatch && !room.aiTriggered) {
             room.aiTriggered = true;
-            const botDelay = Math.random() * 3000 + 2000; // Bot takes 2-5 seconds
+            // Bot thinks for 2-5 seconds
+            const botDelay = Math.random() * 3000 + 2000;
             room.botTimer = setTimeout(() => {
                 const q = room.questions[room.currentQuestion];
+                // Bot has 75% accuracy
                 room.answers["BOT"] = Math.random() < 0.75 ? q.correct : Math.floor(Math.random() * 4);
+                room.answerTimes["BOT"] = Date.now();
                 finishQuestion(roomId);
             }, botDelay);
         } else if (Object.keys(room.answers).length === room.players.length) {
@@ -165,7 +197,6 @@ io.on("connection", (socket) => {
 /* =========================
    SERVER STARTUP
 ========================= */
-// CRITICAL: Railway uses process.env.PORT. Must bind to 0.0.0.0.
 const PORT = process.env.PORT || 8080;
 server.listen(PORT, "0.0.0.0", () => {
     console.log(`🚀 Battle Server running on port ${PORT}`);
