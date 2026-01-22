@@ -7,46 +7,28 @@ const app = express();
 const server = http.createServer(app);
 
 /* =========================
-   HEALTH CHECK (RAILWAY)
-========================= */
-app.get("/", (req, res) => res.send("OK"));
-app.get("/health", (req, res) => res.json({ status: "ok" }));
-
-/* =========================
    GLOBALS & HELPERS
 ========================= */
 let queue = [];
 const rooms = {};
 
-/**
- * Fetches questions from WordPress AJAX endpoint
- */
 async function fetchWPQuestions() {
   try {
-    // Note: ensure the 'action' parameter is recognized by your WP plugin
+    // This calls your WordPress AJAX endpoint
     const res = await axios.get("https://blog.legitprep.in/wp-admin/admin-ajax.php?action=get_battle_questions");
-    
-    if (!res.data || !Array.isArray(res.data)) {
-        throw new Error("Invalid API response format");
-    }
-
     return res.data.map(q => ({
       q: q.question,
       options: [q.option_a, q.option_b, q.option_c, q.option_d],
       correct: ["A", "B", "C", "D"].indexOf(q.correct_option)
     }));
   } catch (err) {
-    console.error("❌ WP API Error:", err.message);
-    // Fallback static questions to prevent game crashes
-    return [
-      { q: "Fallback: Which Article relates to Life & Liberty?", options: ["Art 14", "Art 21", "Art 19", "Art 32"], correct: 1 }
-    ];
+    console.error("❌ WP API Error:", err.message); // This catches the 400 errors seen in logs
+    return [{ q: "Article 21 is related to?", options: ["Education", "Life & Liberty", "Religion", "Equality"], correct: 1 }];
   }
 }
 
 function botAnswer(question) {
-  const accuracy = 0.75; // 75% correct
-  return Math.random() < accuracy ? question.correct : Math.floor(Math.random() * 4);
+  return Math.random() < 0.75 ? question.correct : Math.floor(Math.random() * 4);
 }
 
 function removeFromQueue(socketId) {
@@ -57,21 +39,12 @@ function removeFromQueue(socketId) {
   }
 }
 
-function cleanupRoom(roomId) {
-  const room = rooms[roomId];
-  if (!room) return;
-  clearTimeout(room.timer);
-  if (room.botTimer) clearTimeout(room.botTimer);
-  delete rooms[roomId];
-}
-
 /* =========================
    GAME ENGINE
 ========================= */
 function startQuestion(roomId) {
   const room = rooms[roomId];
   if (!room) return;
-  room.answers = {};
   const question = room.questions[room.currentQuestion];
 
   io.to(roomId).emit("question", {
@@ -82,9 +55,9 @@ function startQuestion(roomId) {
   });
 
   if (room.isBotMatch) {
-    const delay = Math.random() * 7000 + 3000; // Bot responds in 3-10s
+    const delay = Math.random() * 5000 + 3000;
     room.botTimer = setTimeout(() => {
-      if (rooms[roomId] && !room.answers["BOT"]) {
+      if (rooms[roomId]) {
         room.answers["BOT"] = botAnswer(question);
         if (Object.keys(room.answers).length === 2) finishQuestion(roomId);
       }
@@ -111,12 +84,12 @@ function finishQuestion(roomId) {
     setTimeout(() => startQuestion(roomId), 2000);
   } else {
     io.to(roomId).emit("battle_end", { scores: room.scores });
-    cleanupRoom(roomId);
+    delete rooms[roomId];
   }
 }
 
 /* =========================
-   SOCKET LOGIC
+   SOCKET LOGIC (Using your custom domain)
 ========================= */
 const io = new Server(server, {
   cors: { 
@@ -128,8 +101,6 @@ const io = new Server(server, {
 });
 
 io.on("connection", (socket) => {
-  console.log("🔌 Connected:", socket.id);
-
   socket.on("join_search", async () => {
     removeFromQueue(socket.id);
     if (queue.length > 0) {
@@ -170,19 +141,7 @@ io.on("connection", (socket) => {
     room.answers[socket.id] = option;
     if (Object.keys(room.answers).length === 2) finishQuestion(roomId);
   });
-
-  socket.on("rematch", () => socket.emit("join_search"));
-
-  socket.on("disconnect", () => {
-    removeFromQueue(socket.id);
-    for (const rid in rooms) {
-      if (rooms[rid].players.includes(socket.id)) {
-        io.to(rid).emit("battle_end", { reason: "opponent_left" });
-        cleanupRoom(rid);
-      }
-    }
-  });
 });
 
 const PORT = process.env.PORT || 8080;
-server.listen(PORT, "0.0.0.0", () => console.log("🚀 Server running on port", PORT));
+server.listen(PORT, "0.0.0.0");
